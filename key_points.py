@@ -24,26 +24,3 @@ class keypoint_matcher:
         matcher = cv2.BFMatcher()
         matches = matcher.match(desc1, desc2)
         return matches, kp1, kp2
-
-
-# -----------------------------------------------------------
-
-matcher = keypoint_matcher()
-matches, kp1, kp2 = matcher.match_keypoints(img1_bw,img2_bw)
-
-best_inlier_matches = kcluster_ransac(img1_bw, img2_bw, kp1, kp2, matches)
-
-
-final_img = cv2.drawMatches(
-    img1, kp1,
-    img2, kp2,
-    best_inlier_matches, None
-)
-
-final_img = cv2.resize(final_img, (1000, 650))
-
-plt.figure(figsize=(10, 6))
-plt.imshow(cv2.cvtColor(final_img, cv2.COLOR_BGR2RGB))
-plt.title(f"Best Cluster (Kmeans + RANSAC)")
-plt.axis('off')
-plt.show()

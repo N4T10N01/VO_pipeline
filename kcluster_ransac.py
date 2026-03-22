@@ -4,18 +4,29 @@ import cv2
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 
-def kcluster_ransac(img1, img2, kp1, kp2, matches):
+def kcluster_ransac(kp1, kp2, matches):
     vectors = []
     match_map = []
 
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
+    # h1, w1 = img1.shape
+    # h2, w2 = img2.shape
+
+    # for m in matches:
+    #     (x1, y1) = kp1[m.queryIdx].pt
+    #     (x2, y2) = kp2[m.trainIdx].pt
+        
+    #     v = [x1/w1, y1/h1, x2/w2, y2/h2]  # normalized
+    #     vectors.append(v)
+    #     match_map.append(m)
 
     for m in matches:
         (x1, y1) = kp1[m.queryIdx].pt
         (x2, y2) = kp2[m.trainIdx].pt
         
-        v = [x1/w1, y1/h1, x2/w2, y2/h2]  # normalized
+        dx = x2 - x1
+        dy = y2 - y1
+        
+        v = [dx, dy]
         vectors.append(v)
         match_map.append(m)
 

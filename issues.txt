@@ -3,3 +3,200 @@ From a preliminary check, it seems ORB is more reliable for key point tracking i
 K-cluster and DBscan were tested in tandem with RANSAC for filtering important keypoints. K-clusters has an unclear tuning process, with certain cluster counts doing better than others, but not in an increasing fashion but a random alternating pattern. In general, DBscan seems to be more efficient since kclusters demands a higher count around 12 at least and with ease selects matches that are more accurate (at worst 2 squares off with most 1 or less) while k-clusters typically is 4-5 squares off. This is likely thanks to the epsilon parameter which allows DBscan to eliminate clusters with points too far from one another, while kclusters compacts points together based on how many clusters are expected to be taken from the total. Therefore, with kclusters it's less straight forward and computationally expensive (b/c more clusters are required) to compact the points together and filter out squares with inaccurately spread out matches). For now, DBscan will be moved forward.
 
 Transformed code into classes and functions in a pseudo-library structure for the ability to reuse aspects and organize substitutable components into a single pipeline file which will be played around with to finalize the pipeline.
+
+Baseline essential matrix function from cv2 is somewhat accurate with projection across runs. However, still far below acceptable for straight trajectory for trail_walk.mp4, and goes different directions between runs. Also, sometimes switches 180 in trajectory. These issues are likely due to numerical drift, inherent degeneracies due to a single plane/monocular perspective, well as the keypoints tracked significantly, almost sporatically varying across frames. 
+
+At this point, Epipolar geometry code approach for building poses fails completely due to solving issues and there remains issues with the classical approach (triangulation isn't succeeding, but this will be replaced with readings from depth camera).
+
+Degeneracy arises in the essential matrix/rotation & translation matrix when estimating with one plane. It makes sense that when lacking an additional reference/depth information, guessing 3D motion reliably is not really possible, but it can be improved. Degeneracy due to a single plane which doesn't allow for depth information is better explained here: http://www.r-5.org/files/books/computers/algo-list/image-processing/vision/Richard_Hartley_Andrew_Zisserman-Multiple_View_Geometry_in_Computer_Vision-EN.pdf in 11.9.2 where a more formal description is given that boils down to the fact no additional plane doesn't constrain what skew-symmetric matrix can be constructed as an answer.
+
+Some improvements already made is using the KLT feature tracker from cv2 instead of orb which forces points to be based on spatial locality, meaning they sre constrained from varying too much from frame to frame, instead of distinct pixelation contrast information, which seems to vary more due to intensity changes over light angles (causing jumps across frames). This leads to one of the issues found with trying the baseline essential matrix function from cv2 with points tracked wildly varying to be combatted a bit, with the trajectory now appearing more stable. Inspecting KLT_cv2.png compared to ORB_cv2.png, it becames clear the initial path remains straight for longer (with ORB initially doing more twists as evidenced by the thicker line), less spinning/loops are committed overall, and the length of the trajectory is farhter in the initial direction of travel, which shows it's getting the net motion more accurately to some degree. This may change for frames with more pronounced objects to track. The loss of the initial straight path could possibly be signaling the increasing numerical error and inherent drift in the estimate from taylor series applicaiton?
+
+Worried if I retain masked points from previous current frame in camera process loop that the amount of points will monotonically decrease, leading to degraded performance over time, even if ideally only filtered/masked points will arise to the next run thanks to their quality information. Added in line to reassess frame fully for previous points if count of previous points falls below a threshold. This way feed won't run out of points to use througohut life time.
+
+Errors with motion estimation using lie algebra continue, tests for synthesized perturbations fail. Created synthetic pertubations for each degree of freedom and checked if applying them to real 3d points which are then projected and passed with their original values to the motion estimation function accurately reproduces perturbations. Doesn't at the moment, seems gauss-newton update may be wrong (didn't accumulate individual deltas but accumulated xi instead, which doesn't work for SE3 groups apparently).
+
+Errors occur when Z is too low due to projection, need to add in corrective threshold. Gauss-newton update was slightly wrong but also remainders passed for linear system are ill-defined with nans or inf due to division by 0 when Z/depth is low, so filtering this out should help. Still issues with non-zero depths, however. Investigating failure of motion estimation outside of low Z issues continues. 
+
+Seems issue witnessed outside of lowdepth occurred for specifically for test case of (1,1,1) where degeneracy arises since a negative translation in z and a positive translation along x produce the exact same pixel motion (can be checked across projection derivative of pixel u (derived from f_x focal length) with respect to X and u with respect to Z). On top of linearization drift issues, inherent degeneracies in the system due to the information in points allow aliasing of motion in one axis from another.
+
+In line with degeneracy issue trend, tests were being done with too few points to obtain all unknowns necessary for system. Have 6 unknowns, with only 2 constraints given by coordinates of single point. Need at least 3 unique points in total against, but ideally more to combat other degeneracies (coplanar points or symmetric layouts)
+
+Motion estimation now seems to be functional for non-zero depth cases, however, extremely sensitive to points passed to it. For example, for the following tests:
+tests_translation = [
+    np.array([0.1, 0.0, 0.0, 0, 0, 0]),   # +x
+    np.array([0.0, 0.1, 0.0, 0, 0, 0]),   # +y
+    np.array([0.0, 0.0, 0.1, 0, 0, 0]),   # +z (forward)
+    np.array([-0.1, 0.0, 0.0, 0, 0, 0]),  # -x
+]
+
+theta = np.deg2rad(5)
+
+tests_rotation = [
+    np.array([0, 0, 0, theta, 0, 0]),  # roll
+    np.array([0, 0, 0, 0, theta, 0]),  # pitch
+    np.array([0, 0, 0, 0, 0, theta]),  # yaw
+]
+
+tests_translation_and_rotation = [
+    np.array([0.1, 0, 0, theta, 0, 0]),  # roll
+    np.array([0, 0.1, 0, 0, theta, 0]),  # pitch
+    np.array([0, 0, 0.1, 0, 0, theta]),  # yaw
+]
+
+It has the following norms between its solution and the answer:
+
+original: [0.1 0.  0.  0.  0.  0. ]
+solved: [ 9.99997368e-02  2.60764992e-07  2.98338284e-08 -2.95589358e-08
+  3.00574294e-08 -2.60794551e-07]
+norm: 4.560192083725639e-07
+----------------------
+original: [0.  0.1 0.  0.  0.  0. ]
+solved: [-1.96829392e-07  1.00000194e-01  2.59740455e-08 -2.57909866e-08
+  2.61595795e-08 -1.96803243e-07]
+norm: 3.42017716997609e-07
+----------------------
+original: [0.  0.  0.1 0.  0.  0. ]
+solved: [ 0.01657616 -0.0165628  -0.00568868  0.00666221 -0.00669535  0.01656946]
+norm: 0.10992248772043624
+----------------------
+original: [-0.1  0.   0.   0.   0.   0. ]
+solved: [-1.00000216e-01  2.18770679e-07  2.20130543e-08 -2.17801638e-08
+  2.22464007e-08 -2.18792459e-07]
+norm: 3.7945612686360707e-07
+----------------------
+original: [0.         0.         0.         0.08726646 0.         0.        ]
+solved: [-0.41314462  0.41306803 -0.00495648  0.00635824 -0.00453951 -0.41314916]
+norm: 0.7201369450228721
+----------------------
+original: [0.         0.         0.         0.         0.08726646 0.        ]
+solved: [-0.44991917  0.44982516  0.09125445 -0.09080835  0.09069271 -0.44991597]
+norm: 0.7897971769555807
+----------------------
+original: [0.         0.         0.         0.         0.         0.08726646]
+solved: [ 0.00324925 -0.00324663 -0.00130533  0.00130589 -0.00131239  0.09040368]
+norm: 0.006005993805274472
+----------------------
+original: [0.1        0.         0.         0.08726646 0.         0.        ]
+solved: [-0.50144692  0.50247136  0.01167796 -0.01018678  0.01228359 -0.50256904]
+norm: 0.9362563218601915
+----------------------
+original: [0.         0.1        0.         0.         0.08726646 0.        ]
+solved: [-0.346245    0.34499007  0.09134397 -0.09110309  0.09067856 -0.34624181]
+norm: 0.562533783079201
+----------------------
+original: [0.         0.         0.1        0.         0.         0.08726646]
+solved: [ 0.26528164 -0.265237   -0.02132968  0.02205456 -0.02258508  0.26612198]
+norm: 0.4340871901246307
+----------------------
+
+when using simple_3d = np.array([[2,1,5], [1,0,1e-3],[0,1,1e-3]]) for testing. As seen, it is much better with pure translation but when spread of points improves and more points are given to reduce degenracies in simple_3d = np.array([
+    [2,1,5],
+    [1,0,4],
+    [0,1,6],
+    [-1,-1,5],
+    [1,-1,7],
+    [-2,2,6]
+])
+
+the norms significantly improve to 
+
+original: [0.1 0.  0.  0.  0.  0. ]
+solved: [ 9.99999394e-02 -2.19347199e-08 -1.20679200e-07  1.02552514e-10
+  1.49989656e-08 -1.46758658e-08]
+norm: 1.3840355783722447e-07
+----------------------
+original: [0.  0.1 0.  0.  0.  0. ]
+solved: [-3.78332090e-08  1.00000078e-01 -8.34749549e-08  8.92486960e-09
+  1.35893988e-08 -1.02071690e-08]
+norm: 1.2204254948106565e-07
+----------------------
+original: [0.  0.  0.1 0.  0.  0. ]
+solved: [ 2.91161454e-04  7.74769424e-05  9.81367212e-02  1.60591766e-05
+ -4.39556973e-05  2.48950862e-06]
+norm: 0.001888062918025357
+----------------------
+original: [-0.1  0.   0.   0.   0.   0. ]
+solved: [-9.99999494e-02 -4.95359225e-08  1.66746625e-08 -5.92496594e-09
+ -9.13384809e-09 -6.40064326e-09]
+norm: 7.386519608479464e-08
+----------------------
+original: [0.         0.         0.         0.08726646 0.         0.        ]
+solved: [-0.00532119 -0.00193266 -0.02961024  0.08696644  0.00071703 -0.00018912]
+norm: 0.03015719397971398
+----------------------
+original: [0.         0.         0.         0.         0.08726646 0.        ]
+solved: [-3.72489322e-03 -8.38293665e-04 -3.80222537e-02 -6.82961511e-05
+  8.81605485e-02  1.08764846e-04]
+norm: 0.038224144556495906
+----------------------
+original: [0.         0.         0.         0.         0.         0.08726646]
+solved: [ 0.00257533  0.00058356  0.02037771  0.00012336 -0.00038626  0.08718233]
+norm: 0.020552262168110045
+----------------------
+original: [0.1        0.         0.         0.08726646 0.         0.        ]
+solved: [ 0.09760263 -0.00396139 -0.02845006  0.086611    0.00022864  0.00043376]
+norm: 0.028836021260644475
+----------------------
+original: [0.         0.1        0.         0.         0.08726646 0.        ]
+solved: [-0.00587133  0.10316424 -0.03924138  0.00053685  0.08858476  0.00107853]
+norm: 0.03984420274745591
+----------------------
+original: [0.         0.         0.1        0.         0.         0.08726646]
+solved: [ 2.41199111e-03 -7.72528664e-04  1.18173301e-01 -9.24897376e-05
+ -3.50751920e-04  8.56334432e-02]
+norm: 0.018425028810676817
+----------------------
+
+Adding real points from test runs which are more numerous and spread seems to continue this trend but with diminishing returns.
+
+original: [0.1 0.  0.  0.  0.  0. ]
+solved: [ 9.99999989e-02 -1.90595685e-09 -8.52050508e-09 -9.81474884e-10
+  1.54011991e-09 -9.15626891e-11]
+norm: 8.983261750714335e-09
+----------------------
+original: [0.  0.1 0.  0.  0.  0. ]
+solved: [-2.44077497e-10  1.00000000e-01 -7.11606444e-09  1.14130076e-09
+ -2.53928574e-10 -5.85551743e-10]
+norm: 7.2412790196218075e-09
+----------------------
+original: [0.  0.  0.1 0.  0.  0. ]
+solved: [ 0.00083914  0.00014577  0.08475609 -0.0003497  -0.00130196  0.00075695]
+norm: 0.01534576650561321
+----------------------
+original: [-0.1  0.   0.   0.   0.   0. ]
+solved: [-1.00000003e-01 -1.06246464e-10 -1.46347583e-09  1.11129456e-10
+  1.95913144e-09 -3.02511045e-09]
+norm: 4.675152748825913e-09
+----------------------
+original: [0.         0.         0.         0.08726646 0.         0.        ]
+solved: [-5.67651592e-05  9.24471548e-04 -3.78459395e-03  8.92078242e-02
+  1.06965830e-04  9.25546490e-04]
+norm: 0.004451739455650529
+----------------------
+original: [0.         0.         0.         0.         0.08726646 0.        ]
+solved: [-7.97725995e-04 -6.04693618e-05 -3.56308596e-03  3.16846862e-04
+  8.89379165e-02 -1.09460754e-03]
+norm: 0.004174676112480471
+----------------------
+original: [0.         0.         0.         0.         0.         0.08726646]
+solved: [ 0.00024393 -0.00026836  0.00227973 -0.00061825 -0.00044012  0.0871913 ]
+norm: 0.0024311071263211294
+----------------------
+original: [0.1        0.         0.         0.08726646 0.         0.        ]
+solved: [ 0.09912619  0.00109754 -0.00378174  0.08977735  0.00052477  0.00591949]
+norm: 0.007608550739563831
+----------------------
+original: [0.         0.1        0.         0.         0.08726646 0.        ]
+solved: [ 6.14974684e-05  1.00697305e-01 -3.69305155e-03  4.46582772e-04
+  8.79195807e-02  3.19856401e-03]
+norm: 0.004998545459358596
+----------------------
+original: [0.         0.         0.1        0.         0.         0.08726646]
+solved: [ 0.00133805 -0.00052768  0.0868566  -0.00150249 -0.00120527  0.07994971]
+norm: 0.015233607085586668
+----------------------
+
+ Overall, the magnitudes and values are relatively correct for DOF where pertubations occurred but still numerically unstable for those where no motion occured (should be 0 values). This is also for points that were produced through a perturbation, not frame-by-frame pairings, which will be even less accurate. Passing more points with larger spread does help. May make using ORB for keypoints valuable once again since it tends to spread points amongst objects of scene instead of local area like KLT. It is dependent on environment seemingly.
+
+ Getting rid of Gauss-Newton solve. Single least squares solve alone performs better across experiments. Motion estimate now applicable for general camera process loop and integration will be tested. Current idea is to filter perturbation vector of values less than 1e-3 b/c on a scale of meters those represent mm translations which are akin to noise with the available information. Seems to improve norms decently.

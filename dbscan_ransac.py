@@ -3,7 +3,7 @@ import cv2
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
 
-def dbscan_ransac(img1, img2, kp1, kp2, matches):
+def dbscan_ransac(kp1, kp2, matches):
     # motion version
     vectors = []
     match_map = []

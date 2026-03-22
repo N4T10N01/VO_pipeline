@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from dbscan_ransac import dbscan_ransac
-from epipolar_system import estimate_motion_epipolar
 from classic_system import estimate_motion
 
 img1 = cv2.imread('test_imgs\handheld_check1.jpg')

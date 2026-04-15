@@ -199,4 +199,18 @@ norm: 0.015233607085586668
 
  Overall, the magnitudes and values are relatively correct for DOF where pertubations occurred but still numerically unstable for those where no motion occured (should be 0 values). This is also for points that were produced through a perturbation, not frame-by-frame pairings, which will be even less accurate. Passing more points with larger spread does help. May make using ORB for keypoints valuable once again since it tends to spread points amongst objects of scene instead of local area like KLT. It is dependent on environment seemingly.
 
- Getting rid of Gauss-Newton solve. Single least squares solve alone performs better across experiments. Motion estimate now applicable for general camera process loop and integration will be tested. Current idea is to filter perturbation vector of values less than 1e-3 b/c on a scale of meters those represent mm translations which are akin to noise with the available information. Seems to improve norms decently.
+ Getting rid of Gauss-Newton solve. Single least squares solve alone performs better across experiments. Motion estimate now applicable for general camera process loop and integration will be tested. Current idea is to filter perturbation vector of values less than 1e-3 b/c on a scale of meters those represent mm translations which are akin to noise with the available information. Seems to improve norms decently. 
+
+ 1e-2 seems to perform better across tests and on average for motion as small as 0.1 m. Will need to see if in pracrice motion a small as 0.001 m should be picked up.
+
+ Motion model is still extremely sensitive to motion. Here, lateral motion can be seen to explode the position tracked via plotting:
+ 
+ plotted (-650, 1649) 
+ plotted (-2173, 2534) 
+ plotted (-886, 2803) 
+ plotted (-51050, 141464) 
+ plotted (-1098305814, 556111741)
+
+ indicating some numerical instability potentially. May have to do with conditioning of jacobian or trying to solve residual with projected 2d points on pixel plane instead of normalized 3d points.
+
+ Found out a major cause was b/c update step in the motion estimation function involved multiplying perturbation into current pose and returning that instead of delta directly. The return of the function was being treated as a pertubation, not an updated state, which means it intrinsically induced motion, exascerbating any numerical instability present. Testing didn't pick this up b/c only one perturbation was solved for, not multiple, and the identity matrix was treated as the starting pose, so doubling up on it wouldn't have an effect. Lesson is for a function that involves system updates, test it over multiple updates!

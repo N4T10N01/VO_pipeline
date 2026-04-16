@@ -6,7 +6,6 @@ from scipy import spatial
 from dbscan_ransac import dbscan_ransac
 from classic_system import estimate_motion
 from lie_algebra_utilities import *
-from kalman_filter import *
 
 out3 = cv2.VideoWriter(
     "output3.mp4",
@@ -24,7 +23,7 @@ def draw_keypoints(img, pts, color=(0,255,0)):
         cv2.circle(img, (x, y), 2, color, -1)
     return img
 
-def draw_trajectory(traj_img, t, prev_point, scale=1):
+def draw_trajectory(traj_img, t, prev_point, scale=20):
     center_x = traj_img.shape[1] // 2
     center_y = traj_img.shape[0] // 2
 
@@ -85,8 +84,8 @@ temporal = rs.temporal_filter()
 hole_filling = rs.hole_filling_filter()
 
 spatial.set_option(rs.option.filter_magnitude, 2)
-spatial.set_option(rs.option.filter_smooth_alpha, 0.9)
-spatial.set_option(rs.option.filter_smooth_delta, 10)
+spatial.set_option(rs.option.filter_smooth_alpha, 0.5)
+spatial.set_option(rs.option.filter_smooth_delta, 20)
 
 temporal.set_option(rs.option.filter_smooth_alpha, 0.4)
 temporal.set_option(rs.option.filter_smooth_delta, 10)
@@ -130,13 +129,6 @@ if __name__ == "__main__":
     perturbation = np.eye(4)
 
 
-    Q = 1e-4 * np.eye(6)
-
-    kf = SE3KalmanFilter(
-        init_pose=current_pose,
-        init_cov= Q
-    )
-
     # Get first frame
     prev_frame = pipeline.wait_for_frames()
     prev_frame = align.process(prev_frame)
@@ -154,12 +146,14 @@ if __name__ == "__main__":
     minDistance=6,
     blockSize=6
     )
+    
     loop_count =0
     while True:
         loop_count+=1
-        #prev points are monotonically decreasing from fitlers, must refetch once count gets too low for tracking
         match_img = None
-        if len(pts_prev) < 20: #tunable
+
+        #prev points are monotonically decreasing from fitlers, must refetch once count gets too low for tracking
+        if len(pts_prev) < 100: #tunable
 
             prev_frame = pipeline.wait_for_frames()
             if not prev_frame:
@@ -210,32 +204,14 @@ if __name__ == "__main__":
         pts_prev = pts_prev[mask].reshape(-1,2)
         pts_curr = pts_curr[mask].reshape(-1,2)
 
+        pts_curr = 0.9 * pts_curr + 0.1 * pts_prev
+
         points_3d, mask = project_to_3D(pts_prev, prev_depth, K)
         #points that have associated depth
         pts_prev_valid = pts_prev[mask]
         pts_curr_valid = pts_curr[mask]
 
-        if False and len(pts_prev_valid) < 50:
-
-            # --- Estimate motion via epipolar geometry of cv2 ---
-
-            E, mask = cv2.findEssentialMat(pts_prev, pts_curr, K, method=cv2.RANSAC)
-
-            pts_prev = pts_prev[mask]
-            pts_curr = pts_curr[mask]
-
-            if E is None:
-                continue
-
-            _, R, t, mask = cv2.recoverPose(E, pts_prev, pts_curr, K)
-
-            # pts_curr = pts_curr[mask] #may not want to re-mask here
-
-            perturbation = np.eye(4)
-            perturbation[:3,:3] = R
-            perturbation[:3,3] = t.flatten()
-
-        elif len(pts_prev_valid) > 20:
+        if len(pts_prev_valid) > 20:
             # ---With sufficient depth, do Lie Algebra -----
 
             kp1 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts_prev_valid]
@@ -252,24 +228,13 @@ if __name__ == "__main__":
                 matches = dbscan_ransac(kp1, kp2, matches)
                 pts_curr = np.array([pts_curr[m.trainIdx] for m in matches], dtype=np.float32) # may not want to re-mask here
 
-            # match_img = cv2.drawMatches(
-            #     prev_color, kp1,
-            #     curr_color, kp2,
-            #     matches[:50], None,
-            #     flags=2
-            # )
-            print(pts_curr)
+
             perturbation, sigma = estimate_motion(pts_curr,  points_3d,K, current_pose)
-            print(perturbation)
-            if (log_se3(perturbation)[0]>0.1):
-                print(log_se3(perturbation))
 
-            # kf.predict(perturbation, Q=Q)
+            # if (log_se3(perturbation)[0]>0.1):
+            #     print(log_se3(perturbation))
 
-
-        # Retrieve filtered pose
-        # current_pose = kf.get_pose()
-
+        # optional: filter out smal,l motions that are likely noise (tunable threshold)
         # if np.linalg.norm(log_se3(perturbation)) < 0.02:
         #     perturbation = np.eye(4)
         current_pose = perturbation @ current_pose
@@ -280,7 +245,6 @@ if __name__ == "__main__":
         cv2.imshow("Trajectory", traj_vis)
 
         vis = curr_color.copy()
-        print(vis.shape)
         vis = draw_keypoints(vis, pts_curr)
         cv2.imshow("keypoints", vis)
         out3.write(vis)
@@ -293,7 +257,7 @@ if __name__ == "__main__":
         if cv2.waitKey(1) == 27:
             break
 
-        prev_depth = curr_depth
+        prev_depth = 0.5 * prev_depth + 0.5 * curr_depth
         prev_gray = curr_gray
         prev_color = curr_color
         pts_prev = pts_curr

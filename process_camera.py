@@ -8,7 +8,7 @@ from classic_system import estimate_motion
 from lie_algebra_utilities import *
 
 out3 = cv2.VideoWriter(
-    "output3.mp4",
+    "classic_system_tracking.mp4",
     cv2.VideoWriter_fourcc(*"mp4v"),
     30,
     (640, 480)
@@ -23,7 +23,7 @@ def draw_keypoints(img, pts, color=(0,255,0)):
         cv2.circle(img, (x, y), 2, color, -1)
     return img
 
-def draw_trajectory(traj_img, t, prev_point, scale=20):
+def draw_trajectory(traj_img, t, prev_point, scale=5):
     center_x = traj_img.shape[1] // 2
     center_y = traj_img.shape[0] // 2
 

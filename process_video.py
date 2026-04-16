@@ -9,6 +9,7 @@ img2 = cv2.imread('test_imgs\handheld_check2.jpg')
 img1_bw = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
 img2_bw = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
+
 # --Camera Intrinsics-----
 K = np.array([
     [525.0, 0, 320.0],
@@ -30,18 +31,37 @@ t_global = np.zeros((3,1))
 
 trajectory = []
 
+out1 = cv2.VideoWriter(
+    "output1.mp4",
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    30,
+    (640, 568)
+)
+
+out2 = cv2.VideoWriter(
+    "output2.mp4",
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    30,
+    (640, 580)
+)
+
+
 # -----------------------------
 # Visualization canvas
 # -----------------------------
 
-def draw_trajectory(traj_img, t, prev_point):
-    x = int(5*t[0] + 300)
-    y = int(5*t[2] + 300)
+def draw_trajectory(traj_img, t, prev_point, scale=2):
+    center_x = traj_img.shape[1] // 2
+    center_y = traj_img.shape[0] // 2
+
+    x = int(scale * t[0] + center_x)
+    y = int(center_y - scale * t[1])
 
     if prev_point is not None:
         cv2.line(traj_img, prev_point, (x, y), (0,0,255), 2)
-    
+
     return traj_img, (x, y)
+
 
 # -----------------------------
 # Main VO loop
@@ -52,7 +72,7 @@ def run_vo(video_path):
 
     cap = cv2.VideoCapture(video_path)
     prev_point = None
-    traj_img = np.ones((1200,1200,3), dtype=np.uint8) * 255
+    traj_img = np.ones((580,600,3), dtype=np.uint8) * 255
     ret, prev_frame = cap.read()
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
     kp1, des1 = orb.detectAndCompute(prev_gray, None)
@@ -79,39 +99,39 @@ def run_vo(video_path):
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         #----------- tracking with ORB --------------------
-        kp2, des2 = orb.detectAndCompute(gray, None)
+        # kp2, des2 = orb.detectAndCompute(gray, None)
 
-        matches = bf.match(des1, des2)
-        matches = sorted(matches, key=lambda x: x.distance)[:1000]
+        # matches = bf.match(des1, des2)
+        # matches = sorted(matches, key=lambda x: x.distance)[:1000]
         #---------------------------------------------------------
 
         #-----------tracking with KLT -----------------------------
-        # pts_curr, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, pts_prev, None)
+        pts_curr, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, pts_prev, None)
 
-        # mask = status.flatten() == 1
-        # pts1 = pts_prev[mask].reshape(-1,2)
-        # pts2 = pts_curr[mask].reshape(-1,2)
+        mask = status.flatten() == 1
+        pts1 = pts_prev[mask].reshape(-1,2)
+        pts2 = pts_curr[mask].reshape(-1,2)
 
-        # # --- Optional: forward-backward check (strongly recommended) ---
-        # # pts_back, status_back, _ = cv2.calcOpticalFlowPyrLK(
-        # #     gray, pts1, pts2, None, **lk_params
-        # # )
+        # --- Optional: forward-backward check (strongly recommended) ---
+        # pts_back, status_back, _ = cv2.calcOpticalFlowPyrLK(
+        #     gray, pts1, pts2, None, **lk_params
+        # )
 
-        # # fb_error = np.linalg.norm(pts1 - pts_back, axis=1)
-        # # fb_mask = fb_error < 1.0
-        # # fb_mask = status.flatten()
+        # fb_error = np.linalg.norm(pts1 - pts_back, axis=1)
+        # fb_mask = fb_error < 1.0
+        # fb_mask = status.flatten()
 
-        # # pts1 = pts1[fb_mask].reshape(-1, 2)
-        # # pts2 = pts2[fb_mask].reshape(-1, 2)
+        # pts1 = pts1[fb_mask].reshape(-1, 2)
+        # pts2 = pts2[fb_mask].reshape(-1, 2)
 
-        # kp1 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts1]
-        # kp2 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts2]
+        kp1 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts1]
+        kp2 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts2]
 
-        # matches = []
-        # for i in range(len(pts1)):
-        #     m = cv2.DMatch(_queryIdx=i, _trainIdx=i, _imgIdx=0,
-        #                 _distance=float(np.linalg.norm(pts2[i] - pts1[i])))
-        #     matches.append(m)
+        matches = []
+        for i in range(len(pts1)):
+            m = cv2.DMatch(_queryIdx=i, _trainIdx=i, _imgIdx=0,
+                        _distance=float(np.linalg.norm(pts2[i] - pts1[i])))
+            matches.append(m)
         #---------------------------------------------------
         
         #-----------filter points---------------------------
@@ -154,22 +174,23 @@ def run_vo(video_path):
             matches[:50], None,
             flags=2
         )
-
-        # --- Draw trajectory ---
+          # --- Draw trajectory ---
         traj_img, prev_point = draw_trajectory(traj_img.copy(), t_global.flatten(), prev_point)
         positions.append((int(t.flatten()[0] * 50 + 300), int(t.flatten()[2] * 50 + 300)))
         traj_vis = traj_img
 
         # --- Show ---
         cv2.imshow("Matches", match_img)
+        out1.write(match_img)
         cv2.imshow("Trajectory", traj_vis)
+        out2.write(traj_vis)
 
         # --- Prepare next iteration ---
         prev_frame = frame
         prev_gray = gray
         # pts_prev = pts_curr
         kp1 = kp2
-        des1 = des2
+        # des1 = des2
         frame_id += 1
 
         if cv2.waitKey(1) & 0xFF == 27:
@@ -177,6 +198,8 @@ def run_vo(video_path):
 
     cv2.imwrite("./ORB_cv2.png", traj_vis)
     cap.release()
+    out1.release()
+    out2.release()
     cv2.destroyAllWindows()
 
 run_vo("./test_imgs/trail_walk.mp4")

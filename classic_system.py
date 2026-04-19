@@ -83,7 +83,7 @@ def build_system_normalized(T, points_3d, pts2d, K):
 
 def estimate_motion(pts2d, points_3d, K, T):
     
-    J, r = build_system(T, points_3d, pts2d, K)
+    J, r = build_system_normalized(T, points_3d, pts2d, K)
 
     # delta = np.linalg.lstsq(J, -r, rcond=None)[0] #Original without damping
  

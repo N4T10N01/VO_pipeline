@@ -8,17 +8,10 @@ from classic_system import estimate_motion
 from lie_algebra_utilities import *
 
 out3 = cv2.VideoWriter(
-    "classic_system_tracking_video.mp4",
+    "classic_system_tracking.mp4",
     cv2.VideoWriter_fourcc(*"mp4v"),
     30,
     (640, 480)
-)
-
-out2 = cv2.VideoWriter(
-    "classic_system_tracking_trajectory.mp4",
-    cv2.VideoWriter_fourcc(*"mp4v"),
-    30,
-    (600, 600)
 )
 
 prev_point = None
@@ -30,7 +23,7 @@ def draw_keypoints(img, pts, color=(0,255,0)):
         cv2.circle(img, (x, y), 2, color, -1)
     return img
 
-def draw_trajectory(traj_img, t, prev_point, scale=200):
+def draw_trajectory(traj_img, t, prev_point, scale=5):
     center_x = traj_img.shape[1] // 2
     center_y = traj_img.shape[0] // 2
 
@@ -42,62 +35,27 @@ def draw_trajectory(traj_img, t, prev_point, scale=200):
 
     return traj_img, (x, y)
 
-def bilinear_depth_sample(depth, u, v):
-    h, w = depth.shape
-
-    u = np.asarray(u, dtype=np.float32)
-    v = np.asarray(v, dtype=np.float32)
-
-    # keep samples inside valid interpolation region
-    valid = (u >= 0) & (u < w - 1) & (v >= 0) & (v < h - 1)
-
-    z = np.zeros_like(u, dtype=np.float32)
-    if not np.any(valid):
-        return z, valid
-
-    u_valid = u[valid]
-    v_valid = v[valid]
-
-    x0 = np.floor(u_valid).astype(np.int32)
-    y0 = np.floor(v_valid).astype(np.int32)
-    x1 = x0 + 1
-    y1 = y0 + 1
-
-    du = u_valid - x0
-    dv = v_valid - y0
-
-    z00 = depth[y0, x0]
-    z01 = depth[y0, x1]
-    z10 = depth[y1, x0]
-    z11 = depth[y1, x1]
-
-    z_valid = (
-        (1 - du) * (1 - dv) * z00 +
-        du * (1 - dv) * z01 +
-        (1 - du) * dv * z10 +
-        du * dv * z11
-    )
-
-    z[valid] = z_valid
-    return z, valid
-
 def project_to_3D(pts, depth, K):
-    fx, fy = K[0, 0], K[1, 1]
-    cx, cy = K[0, 2], K[1, 2]
+    fx, fy = K[0,0], K[1,1]
+    cx, cy = K[0,2], K[1,2]
 
-    u = pts[:, 0]
-    v = pts[:, 1]
+    u = pts[:,0]
+    v = pts[:,1]
 
-    z, valid_interp = bilinear_depth_sample(depth, u, v)
+    # integer pixel indices
+    u_i = np.clip(u.astype(int), 0, depth.shape[1]-1)
+    v_i = np.clip(v.astype(int), 0, depth.shape[0]-1)
 
-    valid_depth = z > 1e-4
-    valid = valid_interp & valid_depth
+    z = depth[v_i, u_i]
+
+    valid = z > 1e-2
 
     X = (u[valid] - cx) * z[valid] / fx
     Y = (v[valid] - cy) * z[valid] / fy
     Z = z[valid]
 
     pts_3d = np.stack([X, Y, Z], axis=1)
+
     return pts_3d, valid
 
 def complete_depth_filter(depth_frame, depth_scale, spatial, temporal, hole_filling):
@@ -105,7 +63,7 @@ def complete_depth_filter(depth_frame, depth_scale, spatial, temporal, hole_fill
     depth_frame = spatial.process(depth_frame)
     depth_frame = hole_filling.process(depth_frame)
 
-    depth = np.asanyarray(depth_frame.get_data()).astype(np.float32) * depth_scale
+    depth = np.asanyarray(depth_frame.get_data()).astype(np.float32) #* depth_scale
 
     # mask = depth > 0
 
@@ -195,7 +153,7 @@ if __name__ == "__main__":
         match_img = None
 
         #prev points are monotonically decreasing from fitlers, must refetch once count gets too low for tracking
-        if len(pts_prev) < 60: #tunable
+        if len(pts_prev) < 100: #tunable
 
             prev_frame = pipeline.wait_for_frames()
             if not prev_frame:
@@ -242,36 +200,39 @@ if __name__ == "__main__":
         #-----------------done fetching info of images here------------------
 
         pts_curr, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts_prev, None)
-        mask_1 = status.flatten() == 1
-        pts_prev = pts_prev[mask_1].reshape(-1,2)
-        pts_curr = pts_curr[mask_1].reshape(-1,2)
+        mask = status.flatten() == 1
+        pts_prev = pts_prev[mask].reshape(-1,2)
+        pts_curr = pts_curr[mask].reshape(-1,2)
 
-        # pts_curr = 0.9 * pts_curr + 0.1 * pts_prev
+        pts_curr = 0.9 * pts_curr + 0.1 * pts_prev
 
-        points_3d, mask_2 = project_to_3D(pts_prev, prev_depth, K)
+        points_3d, mask = project_to_3D(pts_prev, prev_depth, K)
         #points that have associated depth
-        pts_prev_valid = pts_prev[mask_2]
-        pts_curr_valid = pts_curr[mask_2]
+        pts_prev = pts_prev[mask]
+        pts_curr = pts_curr[mask]
 
-        if len(pts_prev_valid) > 20:
+        if len(pts_prev) > 20:
             # ---With sufficient depth, do Lie Algebra -----
 
-            if len(pts_prev_valid) > 80:
-                mask_3 = dbscan_ransac(pts_prev_valid, pts_curr_valid)
-                pts_curr_valid = pts_curr_valid[mask_3]
-                points_3d = points_3d[mask_3]
-                pts_curr_valid = np.asarray(pts_curr_valid).reshape(-1, 2)
-                points_3d = np.asarray(points_3d).reshape(-1, 3)
+            # kp1 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts_prev]
+            # kp2 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts_curr]
+        
+
+            # matches = []
+            # for i in range(len(pts_prev)):
+            #     m = cv2.DMatch(_queryIdx=i, _trainIdx=i, _imgIdx=0,
+            #                 _distance=float(np.linalg.norm(pts_curr[i] - pts_prev[i])))
+            #     matches.append(m)
+
+            # if len(pts_prev[0]) > 200:
+            #     matches = dbscan_ransac(kp1, kp2, matches)
+            #     pts_curr = np.array([pts_curr[m.trainIdx] for m in matches], dtype=np.float32) # may not want to re-mask here
 
 
+            perturbation, sigma = estimate_motion(pts_curr,  points_3d,K, current_pose)
 
-            if len(pts_curr_valid) - len(points_3d) > 0:
-                print(f"Filtered out {len(pts_curr_valid) - len(points_3d)} points without valid depth")
-
-            perturbation, sigma = estimate_motion(pts_curr_valid,  points_3d,K, current_pose)
-
-            if (log_se3(perturbation)[0]>0.1): #or True:
-                print(log_se3(perturbation))
+            # if (log_se3(perturbation)[0]>0.1):
+            #     print(log_se3(perturbation))
 
         # optional: filter out smal,l motions that are likely noise (tunable threshold)
         # if np.linalg.norm(log_se3(perturbation)) < 0.02:
@@ -282,7 +243,6 @@ if __name__ == "__main__":
         traj_vis = traj_img
 
         cv2.imshow("Trajectory", traj_vis)
-        out2.write(traj_vis)
 
         vis = curr_color.copy()
         vis = draw_keypoints(vis, pts_curr)
@@ -297,12 +257,11 @@ if __name__ == "__main__":
         if cv2.waitKey(1) == 27:
             break
 
-        # prev_depth = 0.5 * prev_depth + 0.5 * curr_depth
+        prev_depth = 0.5 * prev_depth + 0.5 * curr_depth
         prev_gray = curr_gray
         prev_color = curr_color
         pts_prev = pts_curr
 
-    out2.release()
     out3.release()
     cv2.imwrite("./KLT_classic.png", traj_vis)
     cv2.destroyAllWindows()

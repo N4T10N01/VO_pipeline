@@ -31,18 +31,18 @@ t_global = np.zeros((3,1))
 
 trajectory = []
 
-out1 = cv2.VideoWriter(
-    "output1.mp4",
-    cv2.VideoWriter_fourcc(*"mp4v"),
-    30,
-    (640, 568)
-)
+# out1 = cv2.VideoWriter(
+#     "output1.mp4",
+#     cv2.VideoWriter_fourcc(*"mp4v"),
+#     30,
+#     (640, 568)
+# )
 
 out2 = cv2.VideoWriter(
     "output2.mp4",
     cv2.VideoWriter_fourcc(*"mp4v"),
     30,
-    (640, 580)
+    (600, 580)
 )
 
 
@@ -50,12 +50,12 @@ out2 = cv2.VideoWriter(
 # Visualization canvas
 # -----------------------------
 
-def draw_trajectory(traj_img, t, prev_point, scale=2):
+def draw_trajectory(traj_img, t, prev_point, scale=5):
     center_x = traj_img.shape[1] // 2
     center_y = traj_img.shape[0] // 2
 
     x = int(scale * t[0] + center_x)
-    y = int(center_y - scale * t[1])
+    y = int(center_y - scale * t[2])
 
     if prev_point is not None:
         cv2.line(traj_img, prev_point, (x, y), (0,0,255), 2)
@@ -124,22 +124,14 @@ def run_vo(video_path):
         # pts1 = pts1[fb_mask].reshape(-1, 2)
         # pts2 = pts2[fb_mask].reshape(-1, 2)
 
-        kp1 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts1]
-        kp2 = [cv2.KeyPoint(float(p[0]), float(p[1]), 1) for p in pts2]
-
-        matches = []
-        for i in range(len(pts1)):
-            m = cv2.DMatch(_queryIdx=i, _trainIdx=i, _imgIdx=0,
-                        _distance=float(np.linalg.norm(pts2[i] - pts1[i])))
-            matches.append(m)
         #---------------------------------------------------
         
         #-----------filter points---------------------------
-        matches = dbscan_ransac(kp1, kp2, matches)
+        matches = dbscan_ransac(pts1, pts2)
         #---------------------------------------------------
         # --- Estimate motion via epipolar geometry ---
-        pts1 = np.float32([kp1[m.queryIdx].pt for m in matches])
-        pts2 = np.float32([kp2[m.trainIdx].pt for m in matches])
+        pts1 = pts1[matches]
+        pts2 = pts2[matches]
 
         # --- Estimate motion via epipolar geometry ---
         E, mask = cv2.findEssentialMat(pts1, pts2, K, method=cv2.RANSAC)
@@ -168,28 +160,21 @@ def run_vo(video_path):
         trajectory.append(t_global.copy())
 
         # --- Draw matches ---
-        match_img = cv2.drawMatches(
-            prev_frame, kp1,
-            frame, kp2,
-            matches[:50], None,
-            flags=2
-        )
+
           # --- Draw trajectory ---
         traj_img, prev_point = draw_trajectory(traj_img.copy(), t_global.flatten(), prev_point)
         positions.append((int(t.flatten()[0] * 50 + 300), int(t.flatten()[2] * 50 + 300)))
         traj_vis = traj_img
 
         # --- Show ---
-        cv2.imshow("Matches", match_img)
-        out1.write(match_img)
         cv2.imshow("Trajectory", traj_vis)
+
         out2.write(traj_vis)
 
         # --- Prepare next iteration ---
         prev_frame = frame
         prev_gray = gray
-        # pts_prev = pts_curr
-        kp1 = kp2
+        pts_prev = pts_curr
         # des1 = des2
         frame_id += 1
 
@@ -198,7 +183,7 @@ def run_vo(video_path):
 
     cv2.imwrite("./ORB_cv2.png", traj_vis)
     cap.release()
-    out1.release()
+    # out1.release()
     out2.release()
     cv2.destroyAllWindows()
 

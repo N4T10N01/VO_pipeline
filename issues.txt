@@ -231,17 +231,23 @@ A quick aside: kalman filter was found to be not quite appropriate for current p
 
 Another bug found. When the 3D point set is formed from the newest keypoints, points with depths that are too low and can hurt solver accuracy are filtered out. Unfortunately, solver was not receiving point set with invalid depths filtered out (called pts_curr_valid) but was just getting the raw new keypoints, which both could have invalid depths but were not properly corresponding 1 to 1 with 3d point set.
 
-Improved by changing how 3d project works - real sense provides subpixel-accurate feature coordinates, but depth was previously sampled using integer pixel indexing (nearest neighbor) with 
+Improved motion model by changing how 3d projection works - real sense provides subpixel-accurate feature coordinates, but depth was previously sampled using integer pixel indexing (nearest neighbor) with 
     u_i = np.clip(u.astype(int), 0, depth.shape[1]-1)
     v_i = np.clip(v.astype(int), 0, depth.shape[0]-1) so subpixels would snap to depth of nearest pixel instead of interpolating it from adjacent pixels.
 
 This caused discontinuous depth values as features moved across pixel boundaries, leading to jagged 3D point estimates, exascerbating previous depth issues encountered. Replaced nearest-neighbor depth lookup with bilinear interpolation at subpixel feature coordinates.
 So now, depth values now vary smoothly with feature motion and 3D point reconstruction is more consistent. Therefore, it is likely residuals and optimization behave more stably.
 
-Cleaner motion can be seen in videos taken of horizontal_vertical trajectory and circular trajectory with corresponding real footage to show the motion the camera was going through. The clarity of correspondance between the trajectory created camera makes this version of the model appear to the least noisy and most accurate so far.
+Cleaner motion can be seen in videos taken of horizontal_vertical trajectory and circular trajectory with corresponding real footage to show the motion the camera was going through. The clarity of correspondance between the trajectory created camera makes this version of the model appear to the least noisy and most accurate so far. 
+
+Also, removed previous convex combination of key points and depth for now and still seem to have same improvements without any noticeable degradation. May add back in later. 
 
 ----------------------------------------------------------------
 
 To improve  fidelity of current pipeline, will now seek to make benchmark in GTSam via factor graphs or get bundle adjustment done for possible improvement.
 
-Future ideas:  2) calculate noise covariance dynamically based off current jacobian and residuals to more accurately inform factor graph about which directions of perturbation should be dampened in their contribution 3) perturbation vectors will be dynamically clipped (zeroing out every component below the maximum b/w a fraction of the maximum of the perturbation so only one direction/rotation dominates and 10E-2 which is a scale of motion that is too low for the noisy model to reliably detect)
+Got bundle adjustment working with GTSam seemingly. It doesn't provide any immense accuracy upgrade but it does seem to make trajectory less noisy/a little more well-behaved.
+- pixel noise could be calibrated better, estimated around 1-2 pixels right now but could be calculated exactly.
+- unclear how much additional accuracy is provided by gtSam with between poses added versus without, will have to create separate test suite to check over multiple poses which does better. May be negatively influenced by adding estimated perturbations regardless of residual covariance matrix provided
+- doing it every 60 frames seems fairly smooth but still introduces a pause b/c of the seconds it takes the optimizer to solve. May need to lower max iterations or keep it if application like slow moving ego can afford few seconds of stall. Having a separate thread to run it would be ideal and it would serve to back correct the path being traversed (trajectory would become mapping of last few poses tracked)
+-lowering max iterations to 5 seems to have made runs smooth enough for now. There are more frame/max iteration combos to try going forward.

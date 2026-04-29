@@ -34,7 +34,8 @@ def build_system(T, points_3d, pts2d, K):
     t = T[:3,3]
 
     for P, z in zip(points_3d, pts2d):
-        x = P #R @ P + t
+        # x = R @ P + t
+        x = P
         z_hat = project(K, x)
         
         r = z - z_hat #classic constraint
@@ -61,8 +62,8 @@ def build_system_normalized(T, points_3d, pts2d, K):
     t = T[:3,3]
 
     for P, z in zip(points_3d, norm_pts2d):
+        # x = R @ P + t
         x = P
-
         J_proj = projection_jacobian_normalized(x)
         J_pose = pose_jacobian(x)
 

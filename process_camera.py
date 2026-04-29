@@ -35,7 +35,7 @@ def draw_trajectory(traj_img, t, prev_point, scale=200):
     center_y = traj_img.shape[0] // 2
 
     x = int(scale * t[0] + center_x)
-    y = int(center_y - scale * t[1])
+    y = int(center_y + scale * t[1])
 
     if prev_point is not None:
         cv2.line(traj_img, prev_point, (x, y), (0,0,255), 2)
@@ -269,7 +269,7 @@ if __name__ == "__main__":
                 print(f"Filtered out {len(pts_curr_valid) - len(points_3d)} points without valid depth")
 
             perturbation, sigma = estimate_motion(pts_curr_valid,  points_3d,K, current_pose)
-
+            
             if (log_se3(perturbation)[0]>0.1): #or True:
                 print(log_se3(perturbation))
 
